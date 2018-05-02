@@ -36,7 +36,7 @@ Create simple HTTP Server to receive Data from Sensors (https://luftdaten.info) 
 # add script to startup
 - crontab -e
 - add these line
-- @reboot <pathToYourScript>/start_MQTTWebServer.sh
+- @reboot \<pathToYourScript\>/start_MQTTWebServer.sh
 - e.g.
 - @reboot  /home/pi/start_MQTTWebServer.sh
 
