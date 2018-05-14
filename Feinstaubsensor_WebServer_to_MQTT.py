@@ -42,36 +42,40 @@ class myHTTP_2_MQTT_Pushlisher():
         ############################################
         # Edit HTTP Server Port and IP here
         ############################################
-        port = 8089
-        IP = '192.168.1.100'
-        print('Listening HTTP on %s:%s' % (IP, port))
-        server = HTTPServer((IP, port), RequestHandler)
-        server.mqtt = MQTT
-        server.serve_forever()
+        port = 8080
+        IP = '127.0.0.1'
+        try:
+            server = HTTPServer((IP, port), RequestHandler)
+            server.mqtt = MQTT
+            print('Listening HTTP on %s:%s' % (IP, port))
+            server.serve_forever()
+        except Exception as e:
+            print("Error: starting HTTP Server\n%s" %(e) )
+            exit()
 
 class main():
     def __init__(self):
         ############################################
         # Edit MQTT Server Port, IP, ID and PW here
         ############################################
-        mqttServer = "192.168.1.100"
+        mqttServer = "127.0.0.1"
         mqttUserId = ""
         mqttPassword = ""
         mqttPort = 1883
 
-        print('Publish MQTT on %s:%s' % (mqttServer, mqttPort))
+        ############################################
+        # Edit Luftsensor ID or edit multiple IDs
+        ############################################
+        AllowedIDs = ['1234567', '7654321']
+        Prefix = "tele"
+        Topic = "luftsensor_"
+        # Complete Topic:
+        # >>> tele/luftsensor_<SensorID>/<Parameter> Value
 
-        self.mqttH = mqttHandler(mqttServer, mqttUserId, mqttPassword, mqttPort)
+        self.mqttH = mqttHandler(mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic)
         self.server = myHTTP_2_MQTT_Pushlisher(self.mqttH)
 
 class RequestHandler(BaseHTTPRequestHandler):
-    ############################################
-    # Edit Luftsensor ID or edit multiple IDs
-    ############################################
-    AllowedIDs = ['1234567', '7654321']
-    Prefix = "tele"
-    Topic = "luftsensor_"
-    TopicAndPrefix = Prefix + "/" + Topic
 
     def do_GET(self):
         request_path = self.path
@@ -97,7 +101,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         length = int(content_length) if content_length else 0
 
         data = self.rfile.read(length)
-        self.read_all_data_from_sensor(self.format_data(data))
+        # self.read_all_data_from_sensor(self.format_data(data))
+        self.server.mqtt.HTTP_2_MQTT(data)
 
         # print("Content Length:", length)
         # print("Request headers:", request_headers)
@@ -113,6 +118,38 @@ class RequestHandler(BaseHTTPRequestHandler):
     def push_data(self, data_str):
         print("def push_data():", str(data_str))
         pass
+
+
+class mqttHandler():
+    def __init__(self, mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic):
+        self.mqttServer = mqttServer
+        self.mqttUserId = mqttUserId
+        self.mqttPassword = mqttPassword
+        self.mqttPort = mqttPort
+
+        self.AllowedIDs = AllowedIDs
+        self.Prefix = Prefix
+        self.Topic = Topic
+
+        self.TopicAndPrefix = self.Prefix + "/" + self.Topic
+        self.init_mqtt()
+
+    def init_mqtt(self):
+        # print("init_mqtt")
+        self.mqttc = mqtt.Client()
+        try:
+            self.mqttc.username_pw_set(self.mqttUserId, self.mqttPassword)
+            self.mqttc.connect(self.mqttServer, self.mqttPort)
+            self.mqttc.loop_start()
+            print('Connected to MQTT-Broker on %s:%s' % (self.mqttServer, self.mqttPort))
+        except Exception as e:
+            print("Error: connecting mqtt Server:\n%s" %(e) )
+
+
+    def mqttPublish(self, Topic, Value):
+        # Publish to MQTT server
+        # print("mqttPublish", Topic, Value)
+        self.mqttc.publish(Topic, Value)
 
     def read_all_data_from_sensor(self, parsed_json):
         # print("read_all_data_from_sensor", parsed_json)
@@ -133,7 +170,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
                     ######################################################
                     ######################################################
-                    self.server.mqtt.mqttPublish(Topic, Value)
+                    self.mqttPublish(Topic, Value)
                     ######################################################
                     ######################################################
             else:
@@ -152,24 +189,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             print("Error converting JSON DATA")
             return {}
 
-class mqttHandler():
-    def __init__(self, mqttServer, mqttUserId, mqttPassword, mqttPort):
-        self.mqttServer = mqttServer
-        self.mqttUserId = mqttUserId
-        self.mqttPassword = mqttPassword
-        self.mqttPort = mqttPort
-        self.init_mqtt()
-
-    def init_mqtt(self):
-        # print("init_mqtt")
-        self.mqttc = mqtt.Client()
-        self.mqttc.username_pw_set(self.mqttUserId, self.mqttPassword)
-        self.mqttc.connect(self.mqttServer, self.mqttPort)
-        self.mqttc.loop_start()
-
-    def mqttPublish(self, Topic, Value):
-        # Publish to MQTT server
-        self.mqttc.publish(Topic, Value)
+    def HTTP_2_MQTT(self, data):
+        # print("HTTP_2_MQTT", data)
+        self.read_all_data_from_sensor(self.format_data(data))
+        pass
 
 
 if __name__ == "__main__":
