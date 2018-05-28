@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Written by Stefan Holstein
 #
 # Luftsensor Daten separiert über mqtt weiterleiten
@@ -27,7 +27,7 @@
 # python3 Feinstaubsensor_WebServer_to_MQTT.py &
 
 
-# add to crontab afer reboot
+# add to crontab after reboot
 # crontab -e
 # @reboot  /home/pi/start_MQTTWebServer.sh
 
@@ -36,6 +36,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # from optparse import OptionParser
 import paho.mqtt.client as mqtt
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 
 class myHTTP_2_MQTT_Pushlisher():
     def __init__(self, MQTT):
@@ -47,10 +49,10 @@ class myHTTP_2_MQTT_Pushlisher():
         try:
             server = HTTPServer((IP, port), RequestHandler)
             server.mqtt = MQTT
-            print('Listening HTTP on %s:%s' % (IP, port))
+            server.mqtt.app_log.info('Listening HTTP on %s:%s' % (IP, port))
             server.serve_forever()
         except Exception as e:
-            print("Error: starting HTTP Server\n%s" %(e) )
+            MQTT.app_log.error("Error: starting HTTP Server: %s, IP: %s, Port: %s" %(e, IP, port) )
             exit()
 
 class main():
@@ -71,9 +73,25 @@ class main():
         Topic = "luftsensor_"
         # Complete Topic:
         # >>> tele/luftsensor_<SensorID>/<Parameter> Value
-
-        self.mqttH = mqttHandler(mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic)
+        app_log = self.log()
+        self.mqttH = mqttHandler(mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic, app_log)
         self.server = myHTTP_2_MQTT_Pushlisher(self.mqttH)
+
+    def log(self):
+        log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(funcName)s(%(lineno)d) %(message)s')
+
+        logFile = 'log.log'
+
+        logging_file_handler = RotatingFileHandler(logFile, mode='a', maxBytes=5 * 1024 * 1024,
+                                         backupCount=2, encoding=None, delay=0)
+        logging_file_handler.setFormatter(log_formatter)
+        logging_file_handler.setLevel(logging.INFO)
+
+        app_log = logging.getLogger('root')
+        app_log.setLevel(logging.INFO)
+
+        app_log.addHandler(logging_file_handler)
+        return app_log
 
 class RequestHandler(BaseHTTPRequestHandler):
 
@@ -103,6 +121,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         data = self.rfile.read(length)
         # self.read_all_data_from_sensor(self.format_data(data))
         self.server.mqtt.HTTP_2_MQTT(data)
+        # self.server.mqtt.app_log.info("Content Length: %s" % (length))
+        # self.server.mqtt.app_log.info("Request headers: %s" % (request_headers))
+        # self.server.mqtt.app_log.info("Request payload: %s" % self.rfile.read(length))
 
         # print("Content Length:", length)
         # print("Request headers:", request_headers)
@@ -116,12 +137,12 @@ class RequestHandler(BaseHTTPRequestHandler):
     do_DELETE = do_GET
 
     def push_data(self, data_str):
-        print("def push_data():", str(data_str))
+        self.server.mqtt.app_log.info("def push_data(): %s" %(str(data_str)))
         pass
 
 
 class mqttHandler():
-    def __init__(self, mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic):
+    def __init__(self, mqttServer, mqttUserId, mqttPassword, mqttPort, AllowedIDs, Prefix, Topic, app_log):
         self.mqttServer = mqttServer
         self.mqttUserId = mqttUserId
         self.mqttPassword = mqttPassword
@@ -130,6 +151,8 @@ class mqttHandler():
         self.AllowedIDs = AllowedIDs
         self.Prefix = Prefix
         self.Topic = Topic
+
+        self.app_log = app_log
 
         self.TopicAndPrefix = self.Prefix + "/" + self.Topic
         self.init_mqtt()
@@ -141,9 +164,9 @@ class mqttHandler():
             self.mqttc.username_pw_set(self.mqttUserId, self.mqttPassword)
             self.mqttc.connect(self.mqttServer, self.mqttPort)
             self.mqttc.loop_start()
-            print('Connected to MQTT-Broker on %s:%s' % (self.mqttServer, self.mqttPort))
+            self.app_log.info('Connected to MQTT-Broker on %s:%s' % (self.mqttServer, self.mqttPort))
         except Exception as e:
-            print("Error: connecting mqtt Server:\n%s" %(e) )
+            self.app_log.error("Error: connecting mqtt Server: %s" %(e) )
 
 
     def mqttPublish(self, Topic, Value):
@@ -157,14 +180,14 @@ class mqttHandler():
 
             esp8266id = parsed_json["esp8266id"]
             if esp8266id in self.AllowedIDs:
-                # print("Known esp8266id:   ", esp8266id)
+                # self.app_log.info("Known esp8266id:   ", esp8266id)
                 for each in parsed_json['sensordatavalues']:
                     if "pressure" in str(each['value_type']):
                         # preassure data of BME280 have to be divided by 100
-                        print(each['value_type'], float(each['value']) / 100)
+                        self.app_log.info(str(each['value_type']) + " " + str(float(each['value']) / 100))
                         Value = float(each['value']) / 100
                     else:
-                        print(each['value_type'], each['value'])
+                        self.app_log.info(str(each['value_type']) + " " + str(each['value']))
                         Value = each['value']
                     Topic = self.TopicAndPrefix + str(esp8266id) + "/" + each['value_type']
 
@@ -174,9 +197,9 @@ class mqttHandler():
                     ######################################################
                     ######################################################
             else:
-                print("Ignore unknown ID: ", esp8266id)
-        except:
-            print("error in read_all_data_from_sensor")
+                self.app_log.warning("Ignore unknown ID: %s" % str(esp8266id))
+        except Exception as e:
+            self.app_log.error("error in read_all_data_from_sensor: %s" %(e))
 
     def format_data(self, data):
         try:
@@ -185,12 +208,12 @@ class mqttHandler():
             # print(type(parsed_json))
             # print("extract_data . ", parsed_json)
             return parsed_json
-        except:
-            print("Error converting JSON DATA")
+        except Exception as e:
+            self.app_log.error("Error converting JSON DATA: %s" %(e))
             return {}
 
     def HTTP_2_MQTT(self, data):
-        # print("HTTP_2_MQTT", data)
+        self.app_log.info("HTTP_2_MQTT: %s" %(data))
         self.read_all_data_from_sensor(self.format_data(data))
         pass
 
